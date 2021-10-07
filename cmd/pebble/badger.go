@@ -2,8 +2,6 @@
 // of this source code is governed by a BSD-style license that can be found in
 // the LICENSE file.
 
-// +build badger
-
 package main
 
 import (
@@ -20,7 +18,7 @@ type badgerDB struct {
 }
 
 func newBadgerDB(dir string) DB {
-	db, err := badger.Open(badger.DefaultOptions(dir).WithMaxCacheSize(cacheSize))
+	db, err := badger.Open(badger.DefaultOptions(dir).WithBlockCacheSize(cacheSize))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -50,6 +48,7 @@ func (b badgerDB) Scan(iter iterator, key []byte, count int64, reverse bool) err
 }
 
 func (b badgerDB) Metrics() *pebble.Metrics {
+
 	return &pebble.Metrics{}
 }
 
@@ -73,6 +72,19 @@ func (i *badgerIterator) SeekGE(key []byte) bool {
 	if i.upper != nil && bytes.Compare(i.Key(), i.upper) >= 0 {
 		return false
 	}
+	return true
+}
+
+func (i *badgerIterator) SeekLT(key []byte) bool {
+	i.iter.Seek(key)
+	if !i.iter.Valid() {
+		return false
+	}
+
+	if i.lower != nil && bytes.Compare(i.Key(), i.lower) <= 0 {
+		return false
+	}
+
 	return true
 }
 

@@ -27,6 +27,16 @@ const (
 )
 
 func startCPUProfile() func() {
+	if isProfile {
+		return func() {
+
+		}
+	}
+
+	mu.Lock()
+	isProfile = true
+	mu.Unlock()
+
 	runtime.SetMutexProfileFraction(1000)
 
 	done := startRecording("cpu.%04d.prof", pprof.StartCPUProfile, pprof.StopCPUProfile)
@@ -300,6 +310,81 @@ type test struct {
 	init func(db DB, wg *sync.WaitGroup)
 	tick func(elapsed time.Duration, i int)
 	done func(elapsed time.Duration)
+}
+
+func runTestWithoutDir(db DB, t test) {
+	var wg sync.WaitGroup
+	t.init(db, &wg)
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	done := make(chan os.Signal, 3)
+	workersDone := make(chan struct{})
+	signal.Notify(done, os.Interrupt)
+
+	go func() {
+		wg.Wait()
+		close(workersDone)
+	}()
+
+	if duration > 0 {
+		go func() {
+			time.Sleep(duration)
+			done <- syscall.Signal(0)
+		}()
+	}
+
+	stopProf := startCPUProfile()
+	defer stopProf()
+
+	backgroundCompactions := func(p *pebble.Metrics) bool {
+		// The last level never gets selected as an input level for compaction,
+		// only as an output level, so ignore it for the purposes of determining if
+		// background compactions are still needed.
+		for i := range p.Levels[:len(p.Levels)-1] {
+			if p.Levels[i].Score > 1 {
+				return true
+			}
+		}
+		return false
+	}
+
+	start := time.Now()
+	for i := 0; ; i++ {
+		select {
+		case <-ticker.C:
+			if workersDone != nil {
+				t.tick(time.Since(start), i)
+				if verbose && (i%10) == 9 {
+					fmt.Printf("%s", db.Metrics())
+				}
+			} else if waitCompactions {
+				p := db.Metrics()
+				fmt.Printf("%s", p)
+				if !backgroundCompactions(p) {
+					return
+				}
+			}
+
+		case <-workersDone:
+			workersDone = nil
+			t.done(time.Since(start))
+			p := db.Metrics()
+			fmt.Printf("%s", p)
+			if !waitCompactions || !backgroundCompactions(p) {
+				return
+			}
+			fmt.Printf("waiting for background compactions\n")
+
+		case <-done:
+			if workersDone != nil {
+				t.done(time.Since(start))
+			}
+			fmt.Printf("%s", db.Metrics())
+			return
+		}
+	}
 }
 
 func runTest(dir string, t test) {

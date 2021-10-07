@@ -7,6 +7,7 @@ package main
 import (
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/cockroachdb/pebble/tool"
@@ -23,9 +24,11 @@ var (
 	verbose         bool
 	waitCompactions bool
 	wipe            bool
+	isProfile       bool
+	mu              sync.Mutex
 )
 
-func main() {
+func main2() {
 	log.SetFlags(0)
 
 	cobra.EnableCommandSorting = false

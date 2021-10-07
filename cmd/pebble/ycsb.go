@@ -82,9 +82,9 @@ Standard workloads:
 	RunE: runYcsb,
 }
 
-func init() {
-	initYCSB(ycsbCmd)
-}
+// func init() {
+// 	initYCSB(ycsbCmd)
+// }
 
 func initYCSB(cmd *cobra.Command) {
 	ycsbConfig.batch = randvar.NewFlag("1")
@@ -206,6 +206,38 @@ func ycsbParseKeyDist(d string) (randvar.Dynamic, error) {
 	default:
 		return nil, errors.Errorf("unknown distribution: %s", errors.Safe(d))
 	}
+}
+
+func RunYcsbRuntime(db DB) error {
+	// wipe 和 预填充 不能同时设置
+	if wipe && ycsbConfig.prepopulatedKeys > 0 {
+		return errors.New("--wipe and --prepopulated-keys both specified which is nonsensical")
+	}
+
+	weights, err := ycsbParseWorkload(ycsbConfig.workload)
+	if err != nil {
+		return err
+	}
+
+	keyDist, err := ycsbParseKeyDist(ycsbConfig.keys)
+	if err != nil {
+		return err
+	}
+
+	batchDist := ycsbConfig.batch
+	scanDist := ycsbConfig.scans
+	if err != nil {
+		return err
+	}
+
+	valueDist := ycsbConfig.values
+	y := newYcsb(weights, keyDist, batchDist, scanDist, valueDist)
+	runTestWithoutDir(db, test{
+		init: y.init,
+		tick: y.tick,
+		done: y.done,
+	})
+	return nil
 }
 
 func runYcsb(cmd *cobra.Command, args []string) error {
@@ -332,7 +364,7 @@ func (y *ycsb) init(db DB, wg *sync.WaitGroup) {
 			}
 			key := y.makeKey(uint64(i+ycsbConfig.prepopulatedKeys), buf)
 			value := y.randBytes(buf)
-			if err := b.Set(key, value, nil); err != nil {
+			if err := b.Set(key, value, pebble.Sync); err != nil {
 				log.Fatal(err)
 			}
 			size += len(key) + len(value)
